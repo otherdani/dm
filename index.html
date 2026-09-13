@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="hu" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DM Boundary Builder V2</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    body { font-family: 'Inter', sans-serif; background-color: #020617; } /* Tailwind slate-950 */
+    
+    /* Custom Toggle Switch Style */
+    .toggle-checkbox:checked { right: 0; border-color: #6366f1; }
+    .toggle-checkbox:checked + .toggle-label { background-color: #6366f1; }
+    .toggle-checkbox { right: 0; z-index: 1; border-color: #e2e8f0; transition: all 0.3s; }
+    .toggle-label { width: 3rem; height: 1.5rem; background-color: #334155; border-radius: 9999px; transition: all 0.3s; }
+    .toggle-dot { left: 0.25rem; top: 0.25rem; width: 1rem; height: 1rem; background-color: white; border-radius: 50%; transition: all 0.3s; }
+    .toggle-checkbox:checked ~ .toggle-dot { transform: translateX(1.5rem); }
+  </style>
+</head>
+<body class="text-slate-100 min-h-screen flex flex-col p-4 sm:p-6 md:p-8">
+
+  <!-- APP CONTAINER -->
+  <main id="app" class="w-full max-w-2xl mx-auto"></main>
+
+  <script>
+    // --- ADATBÁZIS: Kategóriák és Szabályok ---
+    const CATEGORIES = {
+      'demo': { title: 'Demográfia és Korlátok', icon: 'fa-users', color: 'text-blue-400' },
+      'purpose': { title: 'A megkeresés célja', icon: 'fa-crosshairs', color: 'text-purple-400' },
+      'content': { title: 'Tartalmi tiltások', icon: 'fa-ban', color: 'text-rose-400' },
+      'etiq': { title: 'Kommunikációs Etikett', icon: 'fa-comments', color: 'text-amber-400' },
+      'acc': { title: 'Fiók követelmények', icon: 'fa-user-shield', color: 'text-emerald-400' },
+      'custom': { title: 'Egyedi Szabályok', icon: 'fa-pen-nib', color: 'text-slate-400' }
+    };
+
+    const PRESET_RULES = [
+      // Demográfia
+      { id: 'd1', cat: 'demo', icon: 'fa-user-check', text: 'Csak 18 éven felüliek írhatnak.' },
+      { id: 'd2', cat: 'demo', icon: 'fa-user-clock', text: 'Csak a velem egykorúak (± 2 év) írjanak.' },
+      { id: 'd3', cat: 'demo', icon: 'fa-language', text: 'Csak magyarul vagy angolul beszélők keressenek.' },
+      
+      // Megkeresés célja
+      { id: 'p1', cat: 'purpose', icon: 'fa-handshake', text: 'Nyitott vagyok új barátságokra / beszélgetésekre.' },
+      { id: 'p2', cat: 'purpose', icon: 'fa-heart-crack', text: 'Ismerkedés/Flört szigorúan tilos (Kizárólag baráti keretek).' },
+      { id: 'p3', cat: 'purpose', icon: 'fa-gamepad', text: 'Nyitott vagyok közös játékra (LFG).' },
+      { id: 'p4', cat: 'purpose', icon: 'fa-briefcase', text: 'Szakmai: Csak projektek, tech vagy tanulmányi kérdések miatt keress.' },
+      { id: 'p5', cat: 'purpose', icon: 'fa-hand-holding-hand', text: 'Ne írj rám ingyenes technikai támogatásért vagy házi feladat megoldásáért.' },
+
+      // Tartalom
+      { id: 'c1', cat: 'content', icon: 'fa-triangle-exclamation', text: 'NSFW (18+): Zéró tolerancia a felnőtt tartalmakra.' },
+      { id: 'c2', cat: 'content', icon: 'fa-link-slash', text: 'Spam/Önreklám: Nincs kéretlen link, Discord meghívó vagy promóció.' },
+      { id: 'c3', cat: 'content', icon: 'fa-microphone-lines-slash', text: 'Nem hallgatok meg hangüzeneteket, kérlek, csak szöveget küldj.' },
+      { id: 'c4', cat: 'content', icon: 'fa-image', text: 'Ne küldj képet/videót, amíg nem váltottunk legalább pár üzenetet.' },
+
+      // Etikett
+      { id: 'e1', cat: 'etiq', icon: 'fa-comment-slash', text: '"No Hello": Ne csak köszönj. Írd le egyből, pontosan mit szeretnél.' },
+      { id: 'e2', cat: 'etiq', icon: 'fa-brain', text: 'Trauma dumping: Kérlek, ne zúdítsd rám a személyes problémáidat.' },
+      { id: 'e3', cat: 'etiq', icon: 'fa-hourglass-half', text: 'Válaszidő: Légy türelmes, lehet, hogy csak napok múlva válaszolok.' },
+      { id: 'e4', cat: 'etiq', icon: 'fa-hand-peace', text: 'Tisztelet: Nincs agresszív, követelőző vagy passzív-agresszív stílus.' },
+
+      // Fiók
+      { id: 'a1', cat: 'acc', icon: 'fa-ghost', text: 'Üres, frissen regisztrált vagy "tojás" profiloknak nem válaszolok.' },
+      { id: 'a2', cat: 'acc', icon: 'fa-people-arrows', text: 'Csak akkor írj, ha van közös ismerősünk vagy közös szerveren vagyunk.' }
+    ];
+
+    // Default active presets for new users
+    const DEFAULT_ACTIVE = ['p2', 'c1', 'c2', 'e1', 'e4'];
+    let editorActivePresets = new Set(DEFAULT_ACTIVE);
+    let editorCustomRules = [];
+
+    // --- UTILS: URL Minification ---
+    // Minimalista kulcsokat használunk (n=name, b=bio, s=status, p=presets, c=custom) az URL lerövidítéséhez
+    function encodeState(stateObj) {
+      const minified = {
+        n: stateObj.name, b: stateObj.bio, s: stateObj.status,
+        e: stateObj.email, l: stateObj.altLink,
+        p: Array.from(stateObj.activePresets),
+        c: stateObj.customRules
+      };
+      const json = JSON.stringify(minified);
+      return btoa(encodeURIComponent(json).replace(/%([0-9A-F]{2})/g, (m, p1) => String.fromCharCode('0x' + p1)));
+    }
+
+    function decodeState(str) {
+      try {
+        const json = decodeURIComponent(Array.prototype.map.call(atob(str), c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+        const min = JSON.parse(json);
+        return {
+          name: min.n || '', bio: min.b || '', status: min.s || 'open',
+          email: min.e || '', altLink: min.l || '',
+          activePresets: new Set(min.p || []),
+          customRules: min.c || []
+        };
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function escapeHtml(str) {
+      return (str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    }
+
+    // --- RENDER LOGIC ---
+    function render() {
+      const hash = window.location.hash.replace('#', '');
+      if (hash) {
+        const state = decodeState(hash);
+        if (state) return renderViewMode(state);
+      }
+      renderEditorMode();
+    }
+
+    // 1. OLVASÁSI (VIEW) MÓD
+    function renderViewMode(data) {
+      const statusColors = {
+        open: { bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/20', label: 'DM Nyitva (Szabályok szerint)' },
+        restricted: { bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/20', label: 'DM Korlátozott' },
+        closed: { bg: 'bg-rose-500/10', text: 'text-rose-400', border: 'border-rose-500/20', label: 'DM Zárva' }
+      };
+      const status = statusColors[data.status] || statusColors.open;
+
+      // Szabályok csoportosítása a nézethez
+      let rulesByCat = {};
+      PRESET_RULES.forEach(r => {
+        if (data.activePresets.has(r.id)) {
+          if (!rulesByCat[r.cat]) rulesByCat[r.cat] = [];
+          rulesByCat[r.cat].push(r);
+        }
+      });
+
+      let rulesHtml = '';
+      Object.keys(CATEGORIES).forEach(catKey => {
+        const cat = CATEGORIES[catKey];
+        const rules = rulesByCat[catKey] || [];
+        const customCount = catKey === 'custom' ? data.customRules.length : 0;
+        
+        if (rules.length === 0 && customCount === 0) return;
+
+        rulesHtml += `
+          <div class="mb-5 last:mb-0">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-2">
+              <i class="fa-solid ${cat.icon} ${cat.color}"></i> ${cat.title}
+            </h3>
+            <div class="space-y-2">
+        `;
+
+        // Preset szabályok renderelése
+        rules.forEach(r => {
+          rulesHtml += `
+            <div class="flex items-start gap-3 p-3.5 bg-slate-900/80 border border-slate-800/80 rounded-xl text-sm text-slate-200 shadow-sm">
+              <i class="fa-solid ${r.icon} mt-0.5 text-slate-500 opacity-70 w-4 text-center"></i>
+              <span class="leading-snug">${escapeHtml(r.text)}</span>
+            </div>`;
+        });
+
+        // Egyedi szabályok renderelése a 'custom' kategória alatt
+        if (catKey === 'custom') {
+          data.customRules.forEach(cr => {
+            rulesHtml += `
+              <div class="flex items-start gap-3 p-3.5 bg-slate-900/80 border border-slate-800/80 rounded-xl text-sm text-slate-200 shadow-sm">
+                <i class="fa-solid fa-asterisk mt-0.5 text-slate-500 opacity-70 w-4 text-center"></i>
+                <span class="leading-snug">${escapeHtml(cr)}</span>
+              </div>`;
+          });
+        }
+        rulesHtml += `</div></div>`;
+      });
+
+      if (!rulesHtml) rulesHtml = '<p class="text-slate-500 text-sm text-center py-4">Nincsenek aktív szabályok.</p>';
+
+      document.getElementById('app').innerHTML = `
+        <div class="bg-slate-950 border border-slate-800/60 rounded-3xl p-6 md:p-10 shadow-[0_0_50px_-12px_rgba(0,0,0,0.5)]">
+          <!-- Fejléc -->
+          <div class="text-center space-y-3 pb-8 border-b border-slate-800/50">
+            <h1 class="text-3xl md:text-4xl font-extrabold tracking-tight text-white">${escapeHtml(data.name || 'Anonim')}</h1>
+            ${data.bio ? `<p class="text-slate-400 text-sm md:text-base max-w-md mx-auto">${escapeHtml(data.bio)}</p>` : ''}
+            
+            <div class="pt-3">
+              <span class="inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider border shadow-sm ${status.bg} ${status.text} ${status.border}">
+                <span class="w-2 h-2 rounded-full fill-current bg-current animate-pulse"></span>
+                ${status.label}
+              </span>
+            </div>
+          </div>
+
+          <!-- Szabályok -->
+          <div class="py-8">
+            ${rulesHtml}
+          </div>
+
+          <!-- Kontakt linkek -->
+          ${(data.email || data.altLink) ? `
+            <div class="pt-6 border-t border-slate-800/50 space-y-3">
+              <h2 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-4 text-center">Közösségi & Egyéb Linkek</h2>
+              <div class="grid gap-3 sm:grid-cols-2">
+                ${data.email ? `
+                  <a href="mailto:${escapeHtml(data.email)}" class="flex items-center justify-center gap-2 p-3.5 bg-slate-900 border border-slate-800 hover:border-indigo-500/50 text-slate-300 hover:text-indigo-400 transition rounded-xl text-sm font-semibold shadow-sm">
+                    <i class="fa-solid fa-envelope"></i> E-mail küldése
+                  </a>` : ''}
+                ${data.altLink ? `
+                  <a href="${escapeHtml(data.altLink)}" target="_blank" rel="noopener" class="flex items-center justify-center gap-2 p-3.5 bg-slate-900 border border-slate-800 hover:border-indigo-500/50 text-slate-300 hover:text-indigo-400 transition rounded-xl text-sm font-semibold shadow-sm">
+                    <i class="fa-solid fa-link"></i> Weboldal / Portfólió
+                  </a>` : ''}
+              </div>
+            </div>
+          ` : ''}
+
+          <!-- Footer -->
+          <div class="pt-10 text-center">
+            <a href="${window.location.pathname}" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-900/50 hover:bg-slate-800 text-xs text-slate-400 hover:text-white transition font-medium">
+              <i class="fa-solid fa-wand-magic-sparkles"></i> Építsd meg a saját határaidat (Ingyenes)
+            </a>
+          </div>
+        </div>
+      `;
+    }
+
+    // 2. SZERKESZTŐ (EDITOR) MÓD
+    function renderEditorMode() {
+      document.getElementById('app').innerHTML = `
+        <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-2xl">
+          <div class="mb-8">
+            <h1 class="text-2xl font-bold text-white flex items-center gap-2">
+              <i class="fa-solid fa-shield-halved text-indigo-500"></i> DM Boundary Builder
+            </h1>
+            <p class="text-slate-400 text-sm mt-2 leading-relaxed">Válaszd ki a számodra fontos szabályokat, generálj egy linket, és tedd ki az Insta / TikTok / Discord biódba, hogy mindenki tudja, mi fér bele neked!</p>
+          </div>
+
+          <form id="builderForm" onsubmit="generateLink(event)" class="space-y-8">
+            
+            <!-- 1. Alapadatok -->
+            <section class="space-y-4">
+              <h2 class="text-sm font-bold uppercase tracking-wider text-indigo-400 border-b border-slate-800 pb-2">1. Profilod adatai</h2>
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div class="sm:col-span-2">
+                  <label class="block text-xs font-medium text-slate-400 mb-1.5">Megjelenő Név *</label>
+                  <input type="text" id="inputName" required placeholder="pl. Kovács Bence" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition" />
+                </div>
+                <div class="sm:col-span-2">
+                  <label class="block text-xs font-medium text-slate-400 mb-1.5">Rövid Bio / Titulus</label>
+                  <input type="text" id="inputBio" placeholder="pl. Tartalomgyártó & Kódoló" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition" />
+                </div>
+                <div class="sm:col-span-2">
+                  <label class="block text-xs font-medium text-slate-400 mb-1.5">DM Státusz</label>
+                  <select id="inputStatus" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition">
+                    <option value="open">🟢 DM Nyitva (A lenti szabályok betartásával)</option>
+                    <option value="restricted">🟠 Korlátozott (Csak fontos üzeneteknek)</option>
+                    <option value="closed">🔴 DM Zárva (Kérlek egyáltalán ne írj)</option>
+                  </select>
+                </div>
+              </div>
+            </section>
+
+            <!-- 2. Szabályok (Dinamikus Kategóriák) -->
+            <section class="space-y-6">
+              <h2 class="text-sm font-bold uppercase tracking-wider text-indigo-400 border-b border-slate-800 pb-2">2. Szabályok Testreszabása</h2>
+              <div id="editorCategories" class="space-y-6"></div>
+              
+              <!-- Egyedi szabály hozzáadása -->
+              <div class="pt-4 border-t border-slate-800/50">
+                <label class="block text-xs font-medium text-slate-400 mb-2">Egyedi szabály hozzáadása</label>
+                <div class="flex gap-2">
+                  <input type="text" id="newRuleText" placeholder="Írj be egy saját szabályt..." class="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition" onkeypress="if(event.key === 'Enter') { event.preventDefault(); addCustomRule(); }" />
+                  <button type="button" onclick="addCustomRule()" class="px-5 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-semibold rounded-xl transition">
+                    <i class="fa-solid fa-plus"></i>
+                  </button>
+                </div>
+                <div id="customRulesList" class="mt-3 space-y-2"></div>
+              </div>
+            </section>
+
+            <!-- 3. Egyéb Linkek -->
+            <section class="space-y-4 pt-2">
+              <h2 class="text-sm font-bold uppercase tracking-wider text-indigo-400 border-b border-slate-800 pb-2">3. Egyéb Elérhetőségek (Opcionális)</h2>
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label class="block text-xs font-medium text-slate-400 mb-1.5"><i class="fa-solid fa-envelope"></i> Üzleti Email</label>
+                  <input type="email" id="inputEmail" placeholder="hello@pelda.hu" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition" />
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-slate-400 mb-1.5"><i class="fa-solid fa-link"></i> Weboldal / Portfólió</label>
+                  <input type="url" id="inputAltLink" placeholder="https://..." class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition" />
+                </div>
+              </div>
+            </section>
+
+            <!-- Mentés -->
+            <div class="pt-6">
+              <button type="submit" class="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-[0_0_20px_-5px_rgba(99,102,241,0.5)] transition-all duration-300 flex items-center justify-center gap-2 text-lg">
+                <i class="fa-solid fa-magic"></i> Nyilvános Link Generálása & Másolása
+              </button>
+            </div>
+          </form>
+          
+          <!-- Toast Notification -->
+          <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 hidden flex items-center gap-2 px-6 py-3 bg-emerald-500 text-white text-sm rounded-full shadow-2xl font-semibold animate-bounce">
+            <i class="fa-solid fa-circle-check"></i> Link a vágólapra másolva!
+          </div>
+        </div>
+      `;
+      
+      renderEditorCategories();
+      renderCustomRulesEditor();
+    }
+
+    function renderEditorCategories() {
+      const container = document.getElementById('editorCategories');
+      if (!container) return;
+
+      let html = '';
+      Object.keys(CATEGORIES).forEach(catKey => {
+        if (catKey === 'custom') return; // Kezelve külön
+        const cat = CATEGORIES[catKey];
+        const rules = PRESET_RULES.filter(r => r.cat === catKey);
+        
+        html += `
+          <div class="bg-slate-950/50 rounded-2xl p-4 border border-slate-800/60">
+            <h3 class="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+              <i class="fa-solid ${cat.icon} ${cat.color} w-5"></i> ${cat.title}
+            </h3>
+            <div class="space-y-3">
+        `;
+
+        rules.forEach(rule => {
+          const isActive = editorActivePresets.has(rule.id);
+          html += `
+            <label class="flex items-start gap-3 cursor-pointer group p-2 -mx-2 rounded-lg hover:bg-slate-800/50 transition">
+              <div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in mt-0.5">
+                <input type="checkbox" onchange="togglePreset('${rule.id}')" ${isActive ? 'checked' : ''} class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" />
+                <label class="toggle-label block overflow-hidden h-6 rounded-full bg-slate-700 cursor-pointer"></label>
+              </div>
+              <div class="flex-1 text-sm ${isActive ? 'text-slate-200' : 'text-slate-500'} select-none transition-colors duration-200">
+                ${rule.text}
+              </div>
+            </label>
+          `;
+        });
+        html += `</div></div>`;
+      });
+      container.innerHTML = html;
+    }
+
+    function togglePreset(id) {
+      if (editorActivePresets.has(id)) {
+        editorActivePresets.delete(id);
+      } else {
+        editorActivePresets.add(id);
+      }
+      renderEditorCategories();
+    }
+
+    function addCustomRule() {
+      const input = document.getElementById('newRuleText');
+      const val = input.value.trim();
+      if (!val) return;
+      editorCustomRules.push(val);
+      input.value = '';
+      renderCustomRulesEditor();
+    }
+
+    function removeCustomRule(index) {
+      editorCustomRules.splice(index, 1);
+      renderCustomRulesEditor();
+    }
+
+    function renderCustomRulesEditor() {
+      const container = document.getElementById('customRulesList');
+      if (!container) return;
+      
+      container.innerHTML = editorCustomRules.map((text, idx) => `
+        <div class="flex items-center gap-3 p-3 bg-slate-800/50 border border-slate-700 rounded-xl">
+          <i class="fa-solid fa-check text-indigo-400 text-xs"></i>
+          <span class="flex-1 text-sm text-slate-200">${escapeHtml(text)}</span>
+          <button type="button" onclick="removeCustomRule(${idx})" class="text-slate-500 hover:text-rose-400 px-2 transition">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+      `).join('');
+    }
+
+    function generateLink(e) {
+      e.preventDefault();
+      
+      const stateObj = {
+        name: document.getElementById('inputName').value,
+        bio: document.getElementById('inputBio').value,
+        status: document.getElementById('inputStatus').value,
+        email: document.getElementById('inputEmail').value,
+        altLink: document.getElementById('inputAltLink').value,
+        activePresets: editorActivePresets,
+        customRules: editorCustomRules
+      };
+
+      const encoded = encodeState(stateObj);
+      const fullUrl = `${window.location.origin}${window.location.pathname}#${encoded}`;
+
+      navigator.clipboard.writeText(fullUrl).then(() => {
+        const toast = document.getElementById('toast');
+        toast.classList.remove('hidden');
+        setTimeout(() => toast.classList.add('hidden'), 3500);
+        // Opcionális: Görgetés a tetejére, vagy URL átírása hash nélkül
+      });
+    }
+
+    // Hash változás figyelése és Kezdő render
+    window.addEventListener('hashchange', render);
+    render();
+  </script>
+</body>
+</html>
